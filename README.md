@@ -285,10 +285,7 @@ Run tests with:
 flutter test
 ```
 
----
 
-
----
 
 ## 📄 License
 
