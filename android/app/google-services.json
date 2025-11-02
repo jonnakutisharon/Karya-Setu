@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "371599103359",
+    "project_id": "rental-app-sharon",
+    "storage_bucket": "rental-app-sharon.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:371599103359:android:4ad4b055de045fa5ee364a",
+        "android_client_info": {
+          "package_name": "com.example.rental_app_new"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA-vfmgyFk8MvScwK-59_aHT3-xGapOfzE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
