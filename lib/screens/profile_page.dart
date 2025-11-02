@@ -297,26 +297,26 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              leading: Container(
+                      leading: Container(
                 width: 56,
                 height: 56,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF007BFF).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.inventory_2_outlined,
-                  color: Color(0xFF007BFF),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF007BFF).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.inventory_2_outlined,
+                          color: Color(0xFF007BFF),
                   size: 28,
                 ),
               ),
               title: const Text(
                 'Manage My Products',
                 style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 16,
-                ),
-              ),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
               subtitle: Text(
                 _listedProducts.isEmpty
                     ? 'No products listed yet. Tap to add products.'
@@ -441,10 +441,10 @@ class _ProfilePageState extends State<ProfilePage> {
               padding: const EdgeInsets.all(20),
               child: Form(
                 key: _formKey,
-                child: Column(
-                  children: [
-                    TextFormField(
-                      controller: _nameController,
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _nameController,
                       decoration: InputDecoration(
                         labelText: 'Name',
                         hintText: 'Enter your full name',
@@ -455,11 +455,11 @@ class _ProfilePageState extends State<ProfilePage> {
                         filled: true,
                         fillColor: Colors.grey.shade50,
                       ),
-                      validator: (v) => v == null || v.isEmpty ? 'Please enter a name' : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _phoneController,
+            validator: (v) => v == null || v.isEmpty ? 'Please enter a name' : null,
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _phoneController,
                       decoration: InputDecoration(
                         labelText: 'Phone Number',
                         hintText: 'Enter your phone number',
@@ -470,14 +470,14 @@ class _ProfilePageState extends State<ProfilePage> {
                         filled: true,
                         fillColor: Colors.grey.shade50,
                       ),
-                      keyboardType: TextInputType.phone,
-                      validator: (v) {
-                        if (v == null || v.isEmpty) return 'Please enter a phone number';
-                        if (!RegExp(r'^\+?[0-9]{10,13}$').hasMatch(v)) return 'Enter a valid phone number';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
+            keyboardType: TextInputType.phone,
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Please enter a phone number';
+              if (!RegExp(r'^\+?[0-9]{10,13}$').hasMatch(v)) return 'Enter a valid phone number';
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
                     TextFormField(
                       controller: _stateController,
                       decoration: InputDecoration(
@@ -491,7 +491,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         fillColor: Colors.grey.shade50,
                       ),
                     ),
-                    const SizedBox(height: 16),
+          const SizedBox(height: 16),
                     TextFormField(
                       controller: _districtController,
                       decoration: InputDecoration(
@@ -505,7 +505,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         fillColor: Colors.grey.shade50,
                       ),
                     ),
-                    const SizedBox(height: 16),
+          const SizedBox(height: 16),
                     TextFormField(
                       controller: _pincodeController,
                       decoration: InputDecoration(
@@ -520,7 +520,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       keyboardType: TextInputType.number,
                     ),
-                    const SizedBox(height: 16),
+          const SizedBox(height: 16),
                     TextFormField(
                       controller: _localityController,
                       decoration: InputDecoration(
@@ -699,7 +699,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton(
-                      onPressed: () async {
+            onPressed: () async {
                         // Close dialog first
                         Navigator.pop(dialogContext);
                         // Wait a frame to ensure dialog is fully closed
