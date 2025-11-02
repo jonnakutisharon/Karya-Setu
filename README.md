@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Karya Setu Logo](assets/icon/icon.png)
+![Karya Setu Logo](assets/icon/icon2.png)
 
 **Connecting owners and renters for seamless product sharing**
 
