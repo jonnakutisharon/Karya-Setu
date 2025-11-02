@@ -284,7 +284,7 @@ Run tests with:
 ```bash
 flutter test
 ```
-
+---
 
 
 ## 📄 License
