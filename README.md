@@ -49,7 +49,7 @@
 - Payment dashboard with QR/UPI integration
 - Return processing with penalty calculations (daily-based)
 - Rental history with status tracking
-- Daily rental pricing (price/day instead of price/hour)
+- Daily rental pricing (price/day)
 
 ---
 
