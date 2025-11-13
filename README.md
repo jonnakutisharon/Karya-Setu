@@ -28,7 +28,7 @@
 - ⏰ **Penalty System**: Automated late fee calculation for overdue returns
 - 📸 **Image Management**: Product images with tap-to-enlarge functionality
 - 🔐 **User Authentication**: Secure signup, login, and profile management
-- 📱 **Responsive Design**: Beautiful, modern UI optimized for all devices
+- 📱 **Responsive Design**: Beautiful, modern UI optimised for all devices
 
 ---
 
@@ -162,7 +162,7 @@ lib/
 
 ### Renter Features
 - Scan QR codes for payment
-- Launch UPI apps with pre-filled amount
+- Launch UPI apps with a pre-filled amount
 - Upload payment screenshots as proof
 - Real-time payment status updates
 
@@ -286,20 +286,8 @@ Run tests with:
 ```bash
 flutter test
 ```
-
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
 
 ## 📄 License
 
@@ -311,7 +299,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Sharon**
 
-- GitHub: [@yourusername](https://github.com/yourusername)
+- GitHub: [@jonnakutisharon](https://github.com/jonnakutisharon)
 
 ---
 
