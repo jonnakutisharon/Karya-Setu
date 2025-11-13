@@ -465,7 +465,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          '₹${pricePerHour.toStringAsFixed(2)}/hr',
+                          '₹${pricePerHour.toStringAsFixed(2)}/day',
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 color: Theme.of(context).primaryColor,
                               ),
@@ -755,7 +755,7 @@ class _SubcategoryItemsPageState extends State<SubcategoryItemsPage> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '₹${product['price']?.toString() ?? '0'}/hour',
+                            '₹${product['price']?.toString() ?? '0'}/day',
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium

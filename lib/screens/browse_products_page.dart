@@ -175,7 +175,7 @@ class _BrowseProductsPageState extends State<BrowseProductsPage> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '₹${product['price']?.toString() ?? '0'}/hour',
+                                  '₹${product['price']?.toString() ?? '0'}/day',
                                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                     color: Theme.of(context).primaryColor,
                                   ),

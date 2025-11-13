@@ -76,7 +76,7 @@ class RentProductPage extends StatelessWidget {
                           Text(p['description'] ?? ''),
                           const SizedBox(height: 8),
                           Text(
-                            '₹${(p['price'] ?? 0).toString()} /hour',
+                            '₹${(p['price'] ?? 0).toString()} /day',
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           const SizedBox(height: 16),

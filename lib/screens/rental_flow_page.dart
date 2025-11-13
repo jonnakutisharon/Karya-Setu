@@ -15,7 +15,7 @@ class RentalFlowPage extends StatefulWidget {
 }
 
 class _RentalFlowPageState extends State<RentalFlowPage> {
-  int _selectedHours = 1;
+  int _selectedDays = 1;
   bool _isProcessing = false;
   final SupabaseService _supabase = SupabaseService();
 
@@ -25,7 +25,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
     final pricePerHour = product['price'] is num
         ? (product['price'] as num).toDouble()
         : double.tryParse(product['price']?.toString() ?? '0') ?? 0.0;
-    final totalAmount = pricePerHour * _selectedHours;
+    final totalAmount = pricePerHour * _selectedDays;
     final qrUrl = product['qr_code_url'];
     final upiId = product['upi_id'];
     final hasPaymentMethods = qrUrl != null || upiId != null;
@@ -117,7 +117,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '₹${parsedPrice.toStringAsFixed(2)} per hour',
+                      '₹${parsedPrice.toStringAsFixed(2)} per day',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
@@ -165,23 +165,23 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
             children: [
               Expanded(
                 child: DropdownButtonFormField<int>(
-                  value: _selectedHours,
+                  value: _selectedDays,
                   decoration: const InputDecoration(
-                    labelText: 'Hours',
+                    labelText: 'Days',
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(12)),
                     ),
-                    prefixIcon: Icon(Icons.access_time),
+                    prefixIcon: Icon(Icons.calendar_today),
                   ),
-                  items: List.generate(24, (index) => index + 1)
-                      .map((hour) => DropdownMenuItem(
-                            value: hour,
-                            child: Text('$hour ${hour == 1 ? 'Hour' : 'Hours'}'),
+                  items: List.generate(30, (index) => index + 1)
+                      .map((day) => DropdownMenuItem(
+                            value: day,
+                            child: Text('$day ${day == 1 ? 'Day' : 'Days'}'),
                           ))
                       .toList(),
                   onChanged: (value) {
                     setState(() {
-                      _selectedHours = value ?? 1;
+                      _selectedDays = value ?? 1;
                     });
                   },
                 ),
@@ -202,7 +202,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Rate per hour:'),
+                    const Text('Rate per day:'),
                     Text('₹${pricePerHour.toStringAsFixed(2)}'),
                   ],
                 ),
@@ -211,7 +211,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('Duration:'),
-                    Text('$_selectedHours ${_selectedHours == 1 ? 'hour' : 'hours'}'),
+                    Text('$_selectedDays ${_selectedDays == 1 ? 'day' : 'days'}'),
                   ],
                 ),
                 const Divider(height: 16),
@@ -226,7 +226,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
                       ),
                     ),
                     Text(
-                      '₹${(pricePerHour * _selectedHours).toStringAsFixed(2)}',
+                      '₹${(pricePerHour * _selectedDays).toStringAsFixed(2)}',
                       style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 18,
@@ -385,8 +385,8 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildAmountRow('Rate per hour', pricePerHour),
-          _buildAmountRow('Rental duration', _selectedHours.toDouble(), isDuration: true),
+          _buildAmountRow('Rate per day', pricePerHour),
+          _buildAmountRow('Rental duration', _selectedDays.toDouble(), isDuration: true),
           const Divider(height: 24),
           _buildAmountRow('Total Amount', totalAmount, isTotal: true),
           const SizedBox(height: 16),
@@ -435,7 +435,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
           ),
           Text(
             isDuration 
-                ? '$_selectedHours ${_selectedHours == 1 ? 'hour' : 'hours'}'
+                ? '$_selectedDays ${_selectedDays == 1 ? 'day' : 'days'}'
                 : '₹${value.toStringAsFixed(2)}',
             style: TextStyle(
               fontSize: isTotal ? 18 : 14,
@@ -503,7 +503,7 @@ class _RentalFlowPageState extends State<RentalFlowPage> {
       // Step 2: Update rental with hours and amount
       await _supabase.updateRentalHours(
         rentalId: rental['id'],
-        rentalHours: _selectedHours,
+        rentalHours: _selectedDays,
         pricePerHour: pricePerHour,
       );
 

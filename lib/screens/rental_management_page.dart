@@ -242,24 +242,24 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
 
   PaymentBreakdown _calculatePaymentBreakdown(Map<String, dynamic> rental) {
     final product = rental['products'];
-    final pricePerHour = (product['price'] ?? 0).toDouble();
-    int rentalHours = rental['rental_days'] ?? 0; // Using rental_days field for hours when set
-    if (rentalHours == 0) {
+    final pricePerDay = (product['price'] ?? 0).toDouble();
+    int rentalDays = rental['rental_days'] ?? 0; // Using rental_days field for days
+    if (rentalDays == 0) {
       try {
         final rentedAt = _parseLocalIgnoringTimezone(rental['rented_at']);
         final expected = _parseLocalIgnoringTimezone(rental['expected_return_date']);
         if (rentedAt != null && expected != null) {
-          final diffMinutes = expected.difference(rentedAt).inMinutes;
-          rentalHours = (diffMinutes / 60).ceil();
+          final diffDays = expected.difference(rentedAt).inDays;
+          rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
         }
       } catch (_) {}
     }
-    if (rentalHours <= 0) rentalHours = 1;
-    final baseRent = pricePerHour * rentalHours;
+    if (rentalDays <= 0) rentalDays = 1;
+    final baseRent = pricePerDay * rentalDays;
 
     // Calculate penalty if overdue
     double penalty = 0;
-    int overdueHours = 0; // expose as hours, but compute by minutes for accuracy
+    int overdueDays = 0; // Calculate in days
     bool lockPenalty = false; // Declare at method level for debug print
     
     // Get late_charge early for use in both returned and active rental logic
@@ -270,27 +270,26 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     final returnedAt = rental['returned_at'];
     if (rentalStatus == 'completed' || returnedAt != null) {
       // Item is returned or completed - use late_charge if it exists (penalty already finalized)
-      // IMPORTANT: Always use locked late_charge to calculate overdue hours to maintain consistency
+      // IMPORTANT: Always use locked late_charge to calculate overdue days to maintain consistency
       // from return request time to completion. Do NOT recalculate from returned_at date.
       if (lockedLateCharge != null && lockedLateCharge > 0) {
         penalty = lockedLateCharge;
-        // Calculate overdue hours from the locked penalty amount to ensure consistency
-        // This ensures overtime hours remain the same from return request to completion
-        // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-        // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-        if (pricePerHour > 0) {
-          final overdueMinutesFromPenalty = (penalty * 60.0 / pricePerHour).round();
-          overdueHours = (overdueMinutesFromPenalty / 60.0).ceil();
+        // Calculate overdue days from the locked penalty amount to ensure consistency
+        // This ensures overtime days remain the same from return request to completion
+        // Penalty = pricePerDay * overdueDays * 1.0
+        // Therefore: overdueDays = penalty / pricePerDay
+        if (pricePerDay > 0) {
+          overdueDays = (penalty / pricePerDay).ceil();
         } else {
           // Only use time difference fallback if price is not available AND late_charge exists
-          // But prefer to keep overdue hours at 0 if we can't calculate from penalty
+          // But prefer to keep overdue days at 0 if we can't calculate from penalty
           // This ensures consistency - if we have late_charge, we should have price too
-          overdueHours = 0;
+          overdueDays = 0;
         }
       } else {
         // No late_charge means no penalty was applied
         penalty = 0;
-        overdueHours = 0;
+        overdueDays = 0;
       }
     } else {
       // Only calculate penalty for active rentals that haven't been returned
@@ -303,7 +302,7 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     }
     try {
       DateTime? expectedDate = _parseLocalIgnoringTimezone(rental['expected_return_date']);
-      expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(hours: rentalHours));
+      expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(days: rentalDays));
       if (expectedDate != null) {
         DateTime endTime;
         if (lockPenalty && rental['returned_at'] == null) {
@@ -324,47 +323,48 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
           }
         } else {
           // For active overdue rentals, always use current time to calculate penalty
-          // Penalty updates every minute until payment is submitted
+          // Penalty updates daily until payment is submitted
           endTime = DateTime.now();
         }
         if (endTime.isAfter(expectedDate)) {
-          final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-          // Calculate penalty per minute: 100% of hourly rate per minute overdue
+          final overdueDuration = endTime.difference(expectedDate);
+          final overdueDaysCount = overdueDuration.inDays;
+          // Calculate penalty per day: 100% of daily rate per day overdue
           // This ensures owner doesn't lose money - renter pays full rate for overtime use
-          // Example: ₹30/hour = ₹0.50/min, penalty = ₹0.50/min overdue (full rate)
-          final pricePerMinute = pricePerHour / 60.0;
-          // Calculate penalty based on actual minutes overdue - full hourly rate (100%)
-          penalty = pricePerMinute * overdueMinutes * 1.0; // 100% penalty per minute (full rate)
-          // Ensure minimum 1 minute is calculated if overdue
-          if (penalty > 0 && overdueMinutes < 1) {
-            penalty = pricePerMinute * 1 * 1.0;
+          // Example: ₹100/day = ₹100/day overdue (full rate)
+          // If overdue by any amount (even less than a full day), count as 1 day minimum
+          // Calculate penalty based on actual days overdue - full daily rate (100%)
+          if (overdueDaysCount < 1) {
+            // Overdue by less than a full day - still charge for 1 day
+            penalty = pricePerDay * 1.0; // 100% penalty for 1 day (full rate)
+            overdueDays = 1;
+          } else {
+            penalty = pricePerDay * overdueDaysCount * 1.0; // 100% penalty per day (full rate)
+            overdueDays = overdueDaysCount;
           }
-          // Display overdue hours (rounded up for display, but penalty is based on exact minutes)
-          overdueHours = (overdueMinutes / 60).ceil();
         }
       }
     } catch (_) {}
     // After payment is submitted or locked, use rental['late_charge'] as fixed penalty everywhere
     if (lockPenalty && lockedLateCharge != null && lockedLateCharge > 0) {
       penalty = lockedLateCharge;
-        // Calculate overdue hours from the locked penalty amount to ensure consistency
-        // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-        // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-        if (pricePerHour > 0) {
-          final overdueMinutesFromPenalty = (penalty * 60.0 / pricePerHour).round();
-          overdueHours = (overdueMinutesFromPenalty / 60.0).ceil();
+        // Calculate overdue days from the locked penalty amount to ensure consistency
+        // Penalty = pricePerDay * overdueDays * 1.0
+        // Therefore: overdueDays = penalty / pricePerDay
+        if (pricePerDay > 0) {
+          overdueDays = (penalty / pricePerDay).ceil();
         }
       }
     }
-    debugPrint('[PenaltyCalc-polished] rental ${rental['id']}: hours=$rentalHours base=$baseRent penalty=$penalty overdueHours=$overdueHours lockPenalty=$lockPenalty');
+    debugPrint('[PenaltyCalc-polished] rental ${rental['id']}: days=$rentalDays base=$baseRent penalty=$penalty overdueDays=$overdueDays lockPenalty=$lockPenalty');
 
     return PaymentBreakdown(
       baseRent: baseRent,
       penalty: penalty,
       total: baseRent + penalty,
-      rentalDays: rentalHours, // Using rentalDays field for hours
-      overdueDays: overdueHours, // Using overdueDays field for overdue hours
-      pricePerDay: pricePerHour, // Using pricePerDay field for price per hour
+      rentalDays: rentalDays,
+      overdueDays: overdueDays,
+      pricePerDay: pricePerDay,
     );
   }
 
@@ -662,7 +662,7 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     bool isOverdue = false;
     try {
       DateTime? expectedDate = _parseLocalIgnoringTimezone(rental['expected_return_date']);
-      expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(hours: paymentBreakdown.rentalDays));
+      expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(days: paymentBreakdown.rentalDays));
       if (expectedDate != null) {
         final endTimeTmp = _parseLocalIgnoringTimezone(rental['returned_at']) ?? DateTime.now();
         // Calculate overdue based on time (regardless of penalty payment status)
@@ -784,7 +784,7 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
                     _formatDate(
                       rental['expected_return_date'] ??
                         (rental['rented_at'] != null
-                          ? DateTime.parse(rental['rented_at']).toUtc().add(Duration(hours: paymentBreakdown.rentalDays)).toIso8601String()
+                          ? DateTime.parse(rental['rented_at']).toUtc().add(Duration(days: paymentBreakdown.rentalDays)).toIso8601String()
                           : null),
                     ),
                   ),
@@ -797,14 +797,14 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
           ],
           
           // Rental Details
-          _buildDetailRow('Rental Period', '${paymentBreakdown.rentalDays} hours'),
-          _buildDetailRow('Price per Hour', '₹${paymentBreakdown.pricePerDay.toStringAsFixed(2)}'),
+          _buildDetailRow('Rental Period', '${paymentBreakdown.rentalDays} ${paymentBreakdown.rentalDays == 1 ? 'day' : 'days'}'),
+          _buildDetailRow('Price per Day', '₹${paymentBreakdown.pricePerDay.toStringAsFixed(2)}'),
           _buildDetailRow('Base Rent', '₹${paymentBreakdown.baseRent.toStringAsFixed(2)}'),
           
           // Always show overtime and penalty summary; color-coded when non-zero
           _buildDetailRow(
-            'Overtime Hours',
-            '${paymentBreakdown.overdueDays} hours',
+            'Overtime Days',
+            '${paymentBreakdown.overdueDays} ${paymentBreakdown.overdueDays == 1 ? 'day' : 'days'}',
             isPenalty: paymentBreakdown.overdueDays > 0,
             isPaid: isPenaltyPaymentApproved,
           ),
@@ -1322,19 +1322,18 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     // Get return date
     final returnedAt = rental['returned_at'] != null ? DateTime.tryParse(rental['returned_at']) : null;
     
-    // Calculate overtime hours - use locked late_charge if exists to maintain consistency
+    // Calculate overtime days - use locked late_charge if exists to maintain consistency
     // from return request to completion. Do NOT recalculate from returned_at date.
-    int overtimeHours = 0;
+    int overtimeDays = 0;
     final double? lockedLateCharge = (rental['late_charge'] as num?)?.toDouble();
     final product = rental['products'];
-    final pricePerHour = (product?['price'] ?? 0).toDouble();
+    final pricePerDay = (product?['price'] ?? 0).toDouble();
     
-    if (lockedLateCharge != null && lockedLateCharge > 0 && pricePerHour > 0) {
-      // Use locked late_charge to calculate overtime hours - ensures consistency
-      // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-      // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-      final overdueMinutesFromPenalty = (lockedLateCharge * 60.0 / pricePerHour).round();
-      overtimeHours = (overdueMinutesFromPenalty / 60.0).ceil();
+    if (lockedLateCharge != null && lockedLateCharge > 0 && pricePerDay > 0) {
+      // Use locked late_charge to calculate overtime days - ensures consistency
+      // Penalty = pricePerDay * overdueDays * 1.0
+      // Therefore: overdueDays = penalty / pricePerDay
+      overtimeDays = (lockedLateCharge / pricePerDay).ceil();
     } else {
       // Fallback: only calculate if no locked late_charge exists
       try {
@@ -1342,7 +1341,8 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
           final expected = DateTime.parse(rental['expected_return_date']);
           final end = returnedAt ?? DateTime.now();
           if (end.isAfter(expected)) {
-            overtimeHours = end.difference(expected).inHours;
+            final overdueDaysCount = end.difference(expected).inDays;
+            overtimeDays = overdueDaysCount > 0 ? overdueDaysCount : 1;
           }
         }
       } catch (_) {}
@@ -1449,11 +1449,11 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
                             _formatDate(returnedAt.toString()),
                             Icons.check_circle,
                           ),
-                        // Overtime (hours past expected)
-                        if (overtimeHours > 0)
+                        // Overtime (days past expected)
+                        if (overtimeDays > 0)
                           _buildInfoChip(
                             'Overtime',
-                            '$overtimeHours hour(s)',
+                            '$overtimeDays ${overtimeDays == 1 ? 'day' : 'days'}',
                             Icons.timer_off,
                             isPenalty: true,
                           ),
@@ -1475,18 +1475,19 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
             // Payment Breakdown with Status (mirrors Rental History)
             const SizedBox(height: 16),
             Builder(builder: (context) {
-              // Calculate rental hours locally
-              int rentalHours = rental['rental_days'] ?? 0;
-              if (rentalHours == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
+              // Calculate rental days locally
+              int rentalDays = rental['rental_days'] ?? 0;
+              if (rentalDays == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
                 try {
                   final rentedAtLocal = DateTime.parse(rental['rented_at']);
                   final expectedLocal = DateTime.parse(rental['expected_return_date']);
-                  rentalHours = ((expectedLocal.difference(rentedAtLocal).inMinutes) / 60).ceil();
+                  final diffDays = expectedLocal.difference(rentedAtLocal).inDays;
+                  rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
                 } catch (_) {}
               }
-              if (rentalHours <= 0) rentalHours = 1;
-              final pricePerHour = (rental['products']?['price'] ?? 0).toDouble();
-              final baseAmount = (rentalHours * pricePerHour).toDouble();
+              if (rentalDays <= 0) rentalDays = 1;
+              final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
+              final baseAmount = (rentalDays * pricePerDay).toDouble();
               // Determine current late fee and its paid status
               final breakdown = _calculatePaymentBreakdown(rental);
               final recordedLateCharge = (rental['late_charge'] as num?)?.toDouble();
@@ -1556,10 +1557,10 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    _buildPaymentRow('Base Rent (' + rentalHours.toString() + ' hours)', baseAmount, isPaid: true),
-                    // Show overtime hours if penalty exists for returned products
+                    _buildPaymentRow('Base Rent (' + rentalDays.toString() + ' ${rentalDays == 1 ? 'day' : 'days'})', baseAmount, isPaid: true),
+                    // Show overtime days if penalty exists for returned products
                     if (breakdown.overdueDays > 0 && lateFeeToShow > 0) ...[
-                      _buildDetailRow('Overtime Hours', '${breakdown.overdueDays} hour(s)', isPenalty: true, isPaid: isLateFeePaid),
+                      _buildDetailRow('Overtime Days', '${breakdown.overdueDays} ${breakdown.overdueDays == 1 ? 'day' : 'days'}', isPenalty: true, isPaid: isLateFeePaid),
                     ],
                     _buildPaymentRow('Late Fee (Penalty)', lateFeeToShow, isPaid: isLateFeePaid, isPenalty: true),
                     const Divider(height: 16),
@@ -1842,7 +1843,7 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     try {
       DateTime? expected;
       expected = _parseLocalIgnoringTimezone(rental['expected_return_date']);
-      expected ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(hours: paymentBreakdown.rentalDays));
+      expected ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(days: paymentBreakdown.rentalDays));
       if (expected != null) {
         final now = DateTime.now();
         if (now.isBefore(expected)) {
@@ -2007,15 +2008,18 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
               // 2. NO outstanding penalty at all (hasOutstandingPenalty must be false)
               // 3. No payment is pending submission
               // 4. Status is active
+              // 5. If overdue, penalty must be paid and approved (penaltyApproved must be true)
               // IMPORTANT: Button is completely hidden if ANY dues are outstanding
               // If penalty exists, it must be paid AND approved before button shows
+              // Allow return request even if overdue, as long as penalty is paid
               if (rental['returned_at'] == null && 
                   initialRentPaid &&  // Initial rent must be paid
                   !hasOutstandingPenalty &&  // NO outstanding penalty allowed
+                  (isOverdueNow ? penaltyApproved : true) &&  // If overdue, penalty must be approved
                   rental['payment_status'] != 'submitted' && 
                   rental['payment_status'] != 'awaiting_payment' &&
                   rental['payment_status'] != 'pending' &&
-                  status == 'active')
+                  (status == 'active' || status == 'overdue'))
                 Flexible(fit: FlexFit.loose,
                   child: OutlinedButton(
                     onPressed: () => _requestReturn(rental),
@@ -2464,7 +2468,7 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
                               const SizedBox(height: 16),
                               _buildBreakdownRow('Base Rent', breakdown.baseRent, isPenalty: false),
                               if (breakdown.overdueDays > 0)
-                                _buildBreakdownRow('Overtime Hours', null, text: '${breakdown.overdueDays} hours', isPenalty: true),
+                                _buildBreakdownRow('Overtime Days', null, text: '${breakdown.overdueDays} ${breakdown.overdueDays == 1 ? 'day' : 'days'}', isPenalty: true),
                               _buildBreakdownRow('Penalty', breakdown.penalty, isPenalty: true),
                               const Divider(height: 24),
                               _buildBreakdownRow('Total Amount', breakdown.total, isTotal: true),
@@ -3180,26 +3184,27 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
       if (!isPenaltyPayment && rental['status'] != 'active') {
         // SCENARIO 1: Initial rent approval - renter gets permission to use the product
         // For initial rent approval only: set rental period and start.
-        int rentalHours = rental['rental_days'] ?? 0;
-        if (rentalHours == 0 && rental['amount_due'] != null) {
+        int rentalDays = rental['rental_days'] ?? 0;
+        if (rentalDays == 0 && rental['amount_due'] != null) {
           try {
-            final pricePerHour = (rental['products']?['price'] ?? 0).toDouble();
+            final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
             final due = (rental['amount_due'] as num).toDouble();
-            if (pricePerHour > 0) {
-              rentalHours = (due / pricePerHour).ceil();
+            if (pricePerDay > 0) {
+              rentalDays = (due / pricePerDay).ceil();
             }
           } catch (_) {}
         }
-        if (rentalHours == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
+        if (rentalDays == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
           try {
             final rentedAt = DateTime.parse(rental['rented_at']);
             final expected = DateTime.parse(rental['expected_return_date']);
-            rentalHours = ((expected.difference(rentedAt).inMinutes) / 60).ceil();
+            final diffDays = expected.difference(rentedAt).inDays;
+            rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
           } catch (_) {}
         }
-        if (rentalHours <= 0) rentalHours = 1;
+        if (rentalDays <= 0) rentalDays = 1;
         final now = DateTime.now();
-        final expectedReturn = now.add(Duration(hours: rentalHours));
+        final expectedReturn = now.add(Duration(days: rentalDays));
         await SupabaseService.client.from('rentals').update({
           'status': 'active',
           'payment_status': 'paid',
@@ -3233,12 +3238,12 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
         if (rental['amount_due'] != null) {
           baseRentToPreserve = (rental['amount_due'] as num).toDouble();
         } else {
-          // Calculate base rent from rental hours and price per hour
+          // Calculate base rent from rental days and price per day
           try {
-            final pricePerHour = (rental['products']?['price'] ?? 0).toDouble();
-            int rentalHours = rental['rental_days'] ?? 0;
-            if (rentalHours == 0) rentalHours = 1;
-            baseRentToPreserve = (rentalHours * pricePerHour).toDouble();
+            final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
+            int rentalDays = rental['rental_days'] ?? 0;
+            if (rentalDays == 0) rentalDays = 1;
+            baseRentToPreserve = (rentalDays * pricePerDay).toDouble();
           } catch (_) {
             // If calculation fails, keep existing amount (might be base rent already)
             baseRentToPreserve = rental['amount'] != null ? (rental['amount'] as num).toDouble() : null;

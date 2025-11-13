@@ -449,13 +449,13 @@ class SupabaseService {
     }).eq('id', rentalId);
   }
 
-  /// Update rental with hours (for hourly rentals)
+  /// Update rental with days (for daily rentals)
   Future<void> updateRentalHours({
     required String rentalId,
-    required int rentalHours,
-    required double pricePerHour,
+    required int rentalHours, // rentalDays stored in rental_days field
+    required double pricePerHour, // pricePerDay
   }) async {
-    final rentalAmount = rentalHours * pricePerHour;
+    final rentalAmount = rentalHours * pricePerHour; // rentalDays * pricePerDay
 
     await client.from('rentals').update({
       // Do NOT set expected_return_date here; start time only after owner approval

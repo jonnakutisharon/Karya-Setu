@@ -28,22 +28,22 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
 
   void _calculatePaymentBreakdown() {
     final product = widget.rental['products'];
-    final pricePerHour = (product['price'] ?? 0).toDouble();
+    final pricePerDay = (product['price'] ?? 0).toDouble();
 
-    // Determine booked hours: prefer rental_days field; else compute from rented_at -> expected_return_date
-    int rentalHours = widget.rental['rental_days'] ?? 0;
-    if (rentalHours == 0) {
+    // Determine booked days: prefer rental_days field; else compute from rented_at -> expected_return_date
+    int rentalDays = widget.rental['rental_days'] ?? 0;
+    if (rentalDays == 0) {
       try {
         final rentedAt = widget.rental['rented_at'] != null ? DateTime.parse(widget.rental['rented_at']) : null;
         final expected = widget.rental['expected_return_date'] != null ? DateTime.parse(widget.rental['expected_return_date']) : null;
         if (rentedAt != null && expected != null) {
-          final diffMinutes = expected.difference(rentedAt).inMinutes;
-          rentalHours = (diffMinutes / 60).ceil();
+          final diffDays = expected.difference(rentedAt).inDays;
+          rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
         }
       } catch (_) {}
     }
-    if (rentalHours <= 0) rentalHours = 1;
-    final baseRent = pricePerHour * rentalHours;
+    if (rentalDays <= 0) rentalDays = 1;
+    final baseRent = pricePerDay * rentalDays;
 
     // Get locked late_charge if it exists (this is the penalty amount that was already paid/approved)
     final double? lockedLateCharge = (widget.rental['late_charge'] as num?)?.toDouble();
@@ -52,35 +52,33 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
     // If return is requested, penalty should already be paid and locked in late_charge
     // Use the locked late_charge to ensure consistency with payment details
     double penalty = 0;
-    int overdueHours = 0;
+    int overdueDays = 0;
     
     if (lockedLateCharge != null && lockedLateCharge > 0) {
       // Use locked penalty amount (already paid/approved)
       penalty = lockedLateCharge;
-      // Calculate overdue hours from locked penalty to ensure consistency
-      // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-      // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-      if (pricePerHour > 0) {
-        final overdueMinutesFromPenalty = (penalty * 60.0 / pricePerHour).round();
-        overdueHours = (overdueMinutesFromPenalty / 60.0).ceil();
+      // Calculate overdue days from locked penalty to ensure consistency
+      // Penalty = pricePerDay * overdueDays * 1.0
+      // Therefore: overdueDays = penalty / pricePerDay
+      if (pricePerDay > 0) {
+        overdueDays = (penalty / pricePerDay).ceil();
       }
     } else if (paymentStatus == 'return_requested') {
       // Return requested but no late_charge - should not happen, but calculate as 0
       penalty = 0;
-      overdueHours = 0;
+      overdueDays = 0;
     } else {
       // Only calculate penalty if no locked late_charge exists and return is not requested
-      // Calculate penalty if overdue (expected_return_date vs now) - per minute for accuracy
+      // Calculate penalty if overdue (expected_return_date vs now) - per day
       if (widget.rental['expected_return_date'] != null) {
         final expectedDate = DateTime.parse(widget.rental['expected_return_date']);
         final now = DateTime.now();
         if (now.isAfter(expectedDate)) {
-          final overdueMinutes = now.difference(expectedDate).inMinutes;
-          overdueHours = (overdueMinutes / 60).ceil();
-          // Calculate penalty per minute: 100% of hourly rate per minute overdue
+          final overdueDaysCount = now.difference(expectedDate).inDays;
+          overdueDays = overdueDaysCount > 0 ? overdueDaysCount : 1;
+          // Calculate penalty per day: 100% of daily rate per day overdue
           // This ensures owner doesn't lose money - renter pays full rate for overtime use
-          final pricePerMinute = pricePerHour / 60.0;
-          penalty = pricePerMinute * overdueMinutes * 1.0; // 100% penalty per minute (full rate)
+          penalty = pricePerDay * overdueDays * 1.0; // 100% penalty per day (full rate)
         }
       }
     }
@@ -90,9 +88,9 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
         baseRent: baseRent,
         penalty: penalty,
         total: baseRent + penalty,
-        rentalDays: rentalHours, // Using rentalDays field for hours
-        overdueDays: overdueHours, // Using overdueDays field for overdue hours
-        pricePerDay: pricePerHour, // Using pricePerDay field for price per hour
+        rentalDays: rentalDays,
+        overdueDays: overdueDays,
+        pricePerDay: pricePerDay,
       );
     });
   }
@@ -355,7 +353,7 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
           const SizedBox(height: 16),
           // Base rent with status
           _buildStatusAmountRow(
-            label: 'Base Rent (${_paymentBreakdown!.rentalDays} hours)',
+            label: 'Base Rent (${_paymentBreakdown!.rentalDays} ${_paymentBreakdown!.rentalDays == 1 ? 'day' : 'days'})',
             amount: _paymentBreakdown!.baseRent,
             status: _isBaseRentPaid() ? 'Paid' : 'Unpaid',
             statusColor: _isBaseRentPaid() ? const Color(0xFF10B981) : const Color(0xFFDC2626),
@@ -363,7 +361,7 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
           const SizedBox(height: 8),
           // Penalty always shown (0 if none)
           _buildStatusAmountRow(
-            label: 'Late Penalty (${_paymentBreakdown!.overdueDays} hours)',
+            label: 'Late Penalty (${_paymentBreakdown!.overdueDays} ${_paymentBreakdown!.overdueDays == 1 ? 'day' : 'days'})',
             amount: _paymentBreakdown!.penalty,
             status: _penaltyStatusLabel(),
             statusColor: _penaltyStatusColor(),
@@ -535,7 +533,7 @@ class _RentalReturnModalState extends State<RentalReturnModal> {
                 const SizedBox(height: 4),
                 Text(
                   _paymentBreakdown!.penalty > 0
-                      ? 'This product is ${_paymentBreakdown!.overdueDays} hour(s) overdue. A penalty of ₹${_paymentBreakdown!.penalty.toStringAsFixed(2)} ${widget.rental['late_charge'] != null && (widget.rental['late_charge'] as num).toDouble() > 0 ? "has been applied." : "will be applied."}'
+                      ? 'This product is ${_paymentBreakdown!.overdueDays} ${_paymentBreakdown!.overdueDays == 1 ? 'day' : 'days'} overdue. A penalty of ₹${_paymentBreakdown!.penalty.toStringAsFixed(2)} ${widget.rental['late_charge'] != null && (widget.rental['late_charge'] as num).toDouble() > 0 ? "has been applied." : "will be applied."}'
                       : 'No penalty is due for this return.',
                   style: const TextStyle(
                     fontSize: 12,

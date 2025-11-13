@@ -57,25 +57,23 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
       return 0.0;
     }
     
-    // If penalty is already paid (late_charge exists and payment_status is 'paid'), no penalty due
     final recordedLate = (_rentalData!['late_charge'] as num?)?.toDouble() ?? 0.0;
-    if (recordedLate > 0 && paymentStatus == 'paid') {
-      // Penalty already paid and approved - no penalty due
-      return 0.0;
-    }
+    final bool isRentalActive = rentalStatus == 'active' || rentalStatus == 'overdue';
     
     // If penalty payment is pending approval, use the locked penalty amount
     if (recordedLate > 0 && (paymentStatus == 'submitted' || paymentStatus == 'awaiting_payment')) {
       return recordedLate; // Return locked penalty amount
     }
 
-    final pricePerHour = (_productData!['price'] ?? 0).toDouble();
-    int rentalHours = _rentalData!['rental_days'] ?? 0;
-    if (rentalHours <= 0) rentalHours = 1;
+    final pricePerDay = (_productData!['price'] ?? 0).toDouble();
+    int rentalDays = _rentalData!['rental_days'] ?? 0;
+    if (rentalDays <= 0) rentalDays = 1;
 
+    // First, calculate if rental is overdue and what the penalty should be
+    double computedPenalty = 0.0;
     try {
       DateTime? expectedDate = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
-      expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(hours: rentalHours));
+      expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(days: rentalDays));
       if (expectedDate != null) {
         DateTime endTime;
         if (_rentalData!['returned_at'] != null) {
@@ -86,13 +84,53 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
           endTime = DateTime.now();
         }
         if (endTime.isAfter(expectedDate)) {
-          final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-          final pricePerMinute = pricePerHour / 60.0;
-          return pricePerMinute * overdueMinutes * 1.0; // 100% penalty (full rate)
+          final overdueDuration = endTime.difference(expectedDate);
+          final overdueDays = overdueDuration.inDays;
+          // If overdue by any amount (even less than a full day), count as 1 day minimum
+          if (overdueDays < 1) {
+            // Overdue by less than a full day - still charge for 1 day
+            computedPenalty = pricePerDay * 1.0; // 100% penalty for 1 day (full rate)
+          } else {
+            computedPenalty = pricePerDay * overdueDays * 1.0; // 100% penalty per day (full rate)
+          }
         }
       }
     } catch (_) {}
-    return 0.0;
+    
+    // If no penalty is computed (not overdue), return 0
+    if (computedPenalty <= 0.0 && recordedLate <= 0.0) {
+      return 0.0;
+    }
+    
+    // Check if penalty is already paid and approved
+    // For active rentals, we need to distinguish between initial rent payment and penalty payment
+    final latestPayment = _rentalData!['latest_payment'];
+    final bool hasLatestPayment = latestPayment != null;
+    final String? latestPaymentStatus = latestPayment?['status']?.toString();
+    final double? latestPaymentAmount = latestPayment?['amount'] != null 
+        ? (latestPayment['amount'] as num).toDouble() 
+        : null;
+    
+    // Penalty is approved if:
+    // 1. late_charge exists (penalty was recorded)
+    // 2. AND (latest payment exists with status 'paid'/'approved' OR payment_status is 'paid' for active rental)
+    // 3. For active rentals, check if payment amount matches penalty (to distinguish from initial rent)
+    final bool penaltyApproved = (recordedLate > 0.0 || computedPenalty > 0.0) && (
+      (hasLatestPayment &&
+       (latestPaymentStatus == 'paid' || latestPaymentStatus == 'approved') &&
+       (latestPaymentAmount != null && latestPaymentAmount! > 0) &&
+       (recordedLate > 0.0 ? latestPaymentAmount! >= recordedLate * 0.9 : latestPaymentAmount! >= computedPenalty * 0.9)) ||
+      (isRentalActive && paymentStatus == 'paid' && recordedLate > 0.0 && 
+       latestPaymentAmount != null && latestPaymentAmount! >= recordedLate * 0.9) // Payment amount matches penalty
+    );
+    
+    // If penalty is already paid and approved, no penalty due
+    if (penaltyApproved) {
+      return 0.0;
+    }
+    
+    // Return the penalty amount (use recorded late_charge if exists, otherwise computed penalty)
+    return recordedLate > 0.0 ? recordedLate : computedPenalty;
   }
 
   @override
@@ -188,33 +226,32 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
   void _calculatePaymentBreakdown() {
     if (_rentalData == null || _productData == null) return;
 
-    final pricePerHour = (_productData!['price'] ?? 0).toDouble();
-    // Derive hours: prefer rental_hours, else rental_days, else calculate from amount_due, else difference between expected_return_date and rented_at, else 1
-    int rentalHours = _rentalData!['rental_hours'] ?? _rentalData!['rental_days'] ?? 0;
-    if (rentalHours == 0) {
+    final pricePerDay = (_productData!['price'] ?? 0).toDouble();
+    // Derive days: prefer rental_days, else calculate from amount_due, else difference between expected_return_date and rented_at, else 1
+    int rentalDays = _rentalData!['rental_days'] ?? 0;
+    if (rentalDays == 0) {
       // Try to calculate from amount_due if available (for pending rentals)
-      if (_rentalData!['amount_due'] != null && pricePerHour > 0) {
+      if (_rentalData!['amount_due'] != null && pricePerDay > 0) {
         final amountDue = (_rentalData!['amount_due'] as num).toDouble();
-        rentalHours = (amountDue / pricePerHour).ceil();
+        rentalDays = (amountDue / pricePerDay).ceil();
       } else {
         // Fallback to time difference calculation
         try {
           final rentedAt = _parseLocalIgnoringTimezone(_rentalData!['rented_at']);
           final expected = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
           if (rentedAt != null && expected != null) {
-            final diffMinutes = expected.difference(rentedAt).inMinutes;
-            // Use ceiling to avoid undercounting partial hours
-            rentalHours = (diffMinutes / 60).ceil();
+            final diffDays = expected.difference(rentedAt).inDays;
+            rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
           }
         } catch (_) {}
       }
     }
-    if (rentalHours <= 0) rentalHours = 1;
-    final baseRent = pricePerHour * rentalHours;
+    if (rentalDays <= 0) rentalDays = 1;
+    final baseRent = pricePerDay * rentalDays;
 
-    // Calculate penalty if overdue (per-minute calculation, parsing as local and ignoring tz suffix)
+    // Calculate penalty if overdue (per-day calculation, parsing as local and ignoring tz suffix)
     double penalty = 0;
-    int overdueHours = 0;
+    int overdueDays = 0;
     
     final rentalStatus = (_rentalData!['status'] ?? '').toString();
     final paymentStatus = (_rentalData!['payment_status'] ?? '').toString();
@@ -230,15 +267,15 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
       penalty = recordedLate; // Include paid penalty in total calculation
       try {
         DateTime? expectedDate = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
-        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(hours: rentalHours));
+        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(days: rentalDays));
         if (expectedDate != null) {
-          // Calculate overdue hours for display
+          // Calculate overdue days for display
           DateTime endTime = _parseLocalIgnoringTimezone(_rentalData!['return_requested_at']) ?? 
                             _parseLocalIgnoringTimezone(_rentalData!['latest_payment']?['paid_at']) ??
                             DateTime.now();
           if (endTime.isAfter(expectedDate)) {
-            final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-            overdueHours = (overdueMinutes / 60).ceil();
+            final overdueDaysCount = endTime.difference(expectedDate).inDays;
+            overdueDays = overdueDaysCount > 0 ? overdueDaysCount : 1;
           }
         }
       } catch (_) {}
@@ -248,12 +285,12 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
       penalty = recordedLate; // Use locked penalty amount
       try {
         DateTime? expectedDate = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
-        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(hours: rentalHours));
+        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(days: rentalDays));
         if (expectedDate != null) {
           DateTime endTime = _parseLocalIgnoringTimezone(_rentalData!['return_requested_at']) ?? DateTime.now();
           if (endTime.isAfter(expectedDate)) {
-            final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-            overdueHours = (overdueMinutes / 60).ceil();
+            final overdueDaysCount = endTime.difference(expectedDate).inDays;
+            overdueDays = overdueDaysCount > 0 ? overdueDaysCount : 1;
           }
         }
       } catch (_) {}
@@ -262,7 +299,7 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
     else {
       try {
         DateTime? expectedDate = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
-        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(hours: rentalHours));
+        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(days: rentalDays));
         if (expectedDate != null) {
           DateTime endTime;
           if (_rentalData!['returned_at'] != null) {
@@ -273,25 +310,32 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
             endTime = DateTime.now();
           }
           if (endTime.isAfter(expectedDate)) {
-            final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-            overdueHours = (overdueMinutes / 60).ceil();
-            final pricePerMinute = pricePerHour / 60.0;
-            penalty = pricePerMinute * overdueMinutes * 1.0; // 100% per-minute penalty (full rate)
+            final overdueDuration = endTime.difference(expectedDate);
+            final overdueDaysCount = overdueDuration.inDays;
+            // If overdue by any amount (even less than a full day), count as 1 day minimum
+            if (overdueDaysCount < 1) {
+              // Overdue by less than a full day - still charge for 1 day
+              penalty = pricePerDay * 1.0; // 100% penalty for 1 day (full rate)
+              overdueDays = 1;
+            } else {
+              penalty = pricePerDay * overdueDaysCount * 1.0; // 100% per-day penalty (full rate)
+              overdueDays = overdueDaysCount;
+            }
           }
         }
       } catch (_) {}
     }
     
-    debugPrint('[PaymentDashboard] rental ${_rentalData!['id']}: hours=$rentalHours base=$baseRent penalty=$penalty overdueHours=$overdueHours');
+    debugPrint('[PaymentDashboard] rental ${_rentalData!['id']}: days=$rentalDays base=$baseRent penalty=$penalty overdueDays=$overdueDays');
 
     setState(() {
       _paymentBreakdown = PaymentBreakdown(
         baseRent: baseRent,
         penalty: penalty,
         total: baseRent + penalty,
-        rentalDays: rentalHours, // reuse field to display hours
-        overdueDays: overdueHours, // reuse field to display overdue hours
-        pricePerDay: pricePerHour, // reuse field to store price per hour
+        rentalDays: rentalDays,
+        overdueDays: overdueDays,
+        pricePerDay: pricePerDay,
       );
     });
   }
@@ -418,10 +462,10 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
           ),
           const SizedBox(height: 24),
           if (_paymentBreakdown != null) ...[
-            _buildAmountRow('Base Rent (${_paymentBreakdown!.rentalDays} hours)', _paymentBreakdown!.baseRent),
+            _buildAmountRow('Base Rent (${_paymentBreakdown!.rentalDays} ${_paymentBreakdown!.rentalDays == 1 ? 'day' : 'days'})', _paymentBreakdown!.baseRent),
             if (_paymentBreakdown!.penalty > 0) ...[
               const SizedBox(height: 8),
-              _buildAmountRow('Late Penalty (${_paymentBreakdown!.overdueDays} hours)', _paymentBreakdown!.penalty, isPenalty: true),
+              _buildAmountRow('Late Penalty (${_paymentBreakdown!.overdueDays} ${_paymentBreakdown!.overdueDays == 1 ? 'day' : 'days'})', _paymentBreakdown!.penalty, isPenalty: true),
             ],
             const Divider(height: 32),
             _buildAmountRow('Total Amount', _paymentBreakdown!.total, isTotal: true),
@@ -871,11 +915,12 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
     
     // Penalty payment detection:
     // - Rental must be active (initial rent was approved, rental is ongoing)
-    // - There must be a penalty due
+    // - There must be a penalty (recordedLate > 0 OR computed penalty > 0)
     // - Payment is pending approval
     // Note: When penalty payment is submitted, payment_status becomes 'submitted' which overwrites 'paid',
-    // so we can't rely on payment_status. Instead, check if rental is active.
-    final bool isPenaltyPayment = isRentalActive && showApprovalPending && hasPenaltyDue;
+    // so we can't rely on payment_status. Instead, check if rental is active and has penalty.
+    final bool hasPenalty = recordedLate > 0.0 || (penaltyDue > 0 && _rentalData?['returned_at'] == null);
+    final bool isPenaltyPayment = isRentalActive && showApprovalPending && hasPenalty;
 
     Widget paymentStatusWidget;
     if (showApprovalPending) {
@@ -913,14 +958,25 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
           ],
         ),
       );
-    } else if (paymentStatus == 'paid' || paymentStatus == 'completed') {
-      // Check if penalty was just paid (initial rent was already paid before)
-      // Also check payment record status for more accurate detection
-      final latestPaymentStatus = latestPayment?['status']?.toString();
-      final bool isPenaltyPaid = isRentalActive && recordedLate > 0 && (
-        paymentStatus == 'paid' ||
-        (latestPaymentStatus == 'paid' || latestPaymentStatus == 'approved')
-      );
+    } else {
+      // Get latest payment status first
+      final String? latestPaymentStatus = latestPayment?['status']?.toString();
+      final double? latestPaymentAmount = latestPayment?['amount'] != null 
+          ? (latestPayment['amount'] as num).toDouble() 
+          : null;
+      
+      // Check if payment is paid/completed
+      if (paymentStatus == 'paid' || paymentStatus == 'completed' || 
+          latestPaymentStatus == 'paid' || latestPaymentStatus == 'approved') {
+        // Check if penalty was just paid (initial rent was already paid before)
+        // Also check payment record status for more accurate detection
+        // Penalty is paid if: rental is active AND late_charge exists AND payment is approved
+        // Also check if payment amount matches penalty to distinguish from initial rent payment
+        final bool isPenaltyPaid = isRentalActive && recordedLate > 0 && (
+          (paymentStatus == 'paid' && latestPaymentAmount != null && latestPaymentAmount! >= recordedLate * 0.9) ||
+          ((latestPaymentStatus == 'paid' || latestPaymentStatus == 'approved') &&
+           latestPaymentAmount != null && latestPaymentAmount! >= recordedLate * 0.9)
+        );
       
       paymentStatusWidget = Container(
         padding: const EdgeInsets.all(12),
@@ -956,8 +1012,9 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
           ],
         ),
       );
-    } else {
-      paymentStatusWidget = Container(
+      } else {
+        // Payment not paid yet
+        paymentStatusWidget = Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: const Color(0xFFEFF6FF), // soft blue
@@ -979,6 +1036,7 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
           ],
         ),
       );
+      }
     }
 
     final hasApprovalPending = paymentStatus == 'submitted' || paymentStatus == 'pending';
@@ -987,13 +1045,13 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
     // Recalculate penalty here to ensure it's up to date (match management screen parsing rules)
     double currentPenalty = 0.0;
     if (_rentalData != null && _productData != null) {
-      final pricePerHour = (_productData!['price'] ?? 0).toDouble();
-      int rentalHours = _rentalData!['rental_days'] ?? 0;
-      if (rentalHours == 0) rentalHours = 1;
+      final pricePerDay = (_productData!['price'] ?? 0).toDouble();
+      int rentalDays = _rentalData!['rental_days'] ?? 0;
+      if (rentalDays == 0) rentalDays = 1;
       
       try {
         DateTime? expectedDate = _parseLocalIgnoringTimezone(_rentalData!['expected_return_date']);
-        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(hours: rentalHours));
+        expectedDate ??= _parseLocalIgnoringTimezone(_rentalData!['rented_at'])?.add(Duration(days: rentalDays));
         if (expectedDate != null) {
           DateTime endTime;
           if (_rentalData!['returned_at'] != null) {
@@ -1004,9 +1062,9 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
             endTime = DateTime.now();
           }
           if (endTime.isAfter(expectedDate)) {
-            final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-            final pricePerMinute = pricePerHour / 60.0;
-            currentPenalty = pricePerMinute * overdueMinutes * 1.0; // 100% penalty (full rate)
+            final overdueDays = endTime.difference(expectedDate).inDays;
+            final pricePerDay = (_productData!['price'] ?? 0).toDouble();
+            currentPenalty = pricePerDay * overdueDays * 1.0; // 100% penalty per day (full rate)
           }
         }
       } catch (_) {}
@@ -1070,7 +1128,19 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
 
   Widget _buildDueNowBanner() {
     final penaltyDue = _computePenaltyDueNow();
-    final bool hasPenaltyDue = penaltyDue > 0 && _rentalData?['returned_at'] == null;
+    final paymentStatus = (_rentalData?['payment_status'] ?? '').toString();
+    final recordedLate = (_rentalData?['late_charge'] as num?)?.toDouble() ?? 0.0;
+    final latestPayment = _rentalData?['latest_payment'];
+    final latestPaymentStatus = latestPayment?['status']?.toString();
+    
+    // Check if penalty payment is already submitted and pending approval
+    // If payment status is 'submitted' or 'awaiting_payment' and there's a late_charge, penalty payment is pending
+    final bool penaltyPaymentPending = (paymentStatus == 'submitted' || paymentStatus == 'awaiting_payment' || 
+                                        latestPaymentStatus == 'submitted' || latestPaymentStatus == 'pending_confirmation') &&
+                                       recordedLate > 0;
+    
+    // Only show "Penalty Due Now" if penalty exists AND payment is NOT already submitted
+    final bool hasPenaltyDue = penaltyDue > 0 && _rentalData?['returned_at'] == null && !penaltyPaymentPending;
     final double alreadyPaid = (_rentalData?['latest_payment']?['amount'] ?? _rentalData?['amount'] ?? 0).toDouble();
     final double total = _paymentBreakdown?.total ?? 0.0;
     final bool allPaid = !hasPenaltyDue && (alreadyPaid >= total || (_rentalData?['payment_status'] == 'paid' || _rentalData?['status'] == 'completed'));
@@ -1079,28 +1149,43 @@ class _PaymentDashboardState extends State<PaymentDashboard> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: hasPenaltyDue ? const Color(0xFFFEF2F2) : const Color(0xFFF0FDF4),
+        color: hasPenaltyDue ? const Color(0xFFFEF2F2) : (penaltyPaymentPending ? const Color(0xFFFFFBEB) : const Color(0xFFF0FDF4)),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: hasPenaltyDue ? const Color(0xFFFECACA) : const Color(0xFFD1FAE5)),
+        border: Border.all(color: hasPenaltyDue ? const Color(0xFFFECACA) : (penaltyPaymentPending ? const Color(0xFFFDE68A) : const Color(0xFFD1FAE5))),
       ),
       child: Row(
         children: [
-          Icon(hasPenaltyDue ? Icons.warning_amber_rounded : Icons.verified, color: hasPenaltyDue ? const Color(0xFFDC2626) : const Color(0xFF10B981)),
+          Icon(
+            hasPenaltyDue ? Icons.warning_amber_rounded : (penaltyPaymentPending ? Icons.hourglass_top : Icons.verified), 
+            color: hasPenaltyDue ? const Color(0xFFDC2626) : (penaltyPaymentPending ? const Color(0xFFF59E0B) : const Color(0xFF10B981))
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  hasPenaltyDue ? 'Penalty Due Now' : (allPaid ? 'All Dues Cleared' : 'Payment Summary'),
+                  hasPenaltyDue 
+                      ? 'Penalty Due Now' 
+                      : (penaltyPaymentPending 
+                          ? 'Penalty Payment Pending' 
+                          : (allPaid ? 'All Dues Cleared' : 'Payment Summary')),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   hasPenaltyDue
                       ? 'You need to pay ₹' + penaltyDue.toStringAsFixed(2) + ' to continue.'
-                      : ('Paid ₹' + alreadyPaid.toStringAsFixed(2) + (total > 0 ? ' of ₹' + total.toStringAsFixed(2) : '')),
-                  style: TextStyle(fontSize: 13, color: hasPenaltyDue ? const Color(0xFFDC2626) : const Color(0xFF047857), fontWeight: FontWeight.w500),
+                      : (penaltyPaymentPending
+                          ? 'Your penalty payment proof is being reviewed. Once approved, you can request return.'
+                          : ('Paid ₹' + alreadyPaid.toStringAsFixed(2) + (total > 0 ? ' of ₹' + total.toStringAsFixed(2) : ''))),
+                  style: TextStyle(
+                    fontSize: 13, 
+                    color: hasPenaltyDue 
+                        ? const Color(0xFFDC2626) 
+                        : (penaltyPaymentPending ? const Color(0xFF92400E) : const Color(0xFF047857)), 
+                    fontWeight: FontWeight.w500
+                  ),
                 ),
               ],
             ),

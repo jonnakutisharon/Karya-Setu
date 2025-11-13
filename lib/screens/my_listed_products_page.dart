@@ -335,7 +335,7 @@ class _MyListedProductsPageState extends State<MyListedProductsPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '₹${(product['price'] is num ? (product['price'] as num).toDouble() : double.tryParse(product['price']?.toString() ?? '0') ?? 0).toStringAsFixed(2)}/hour',
+                  '₹${(product['price'] is num ? (product['price'] as num).toDouble() : double.tryParse(product['price']?.toString() ?? '0') ?? 0).toStringAsFixed(2)}/day',
                   style: Theme.of(context)
                       .textTheme
                       .titleMedium

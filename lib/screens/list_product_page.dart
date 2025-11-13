@@ -241,10 +241,10 @@ class _ListProductPageState extends State<ListProductPage> {
               TextFormField(
                 controller: _priceController,
                 decoration: const InputDecoration(
-                  labelText: 'Price per Hour',
+                  labelText: 'Price per Day',
                   border: OutlineInputBorder(),
                   prefixText: '₹',
-                  suffixText: '/hr',
+                  suffixText: '/day',
                 ),
                 keyboardType: TextInputType.number,
                 validator: (value) {

@@ -47,8 +47,9 @@
 ### Rental System
 - Active rentals tracking (Owner & Renter views)
 - Payment dashboard with QR/UPI integration
-- Return processing with penalty calculations
+- Return processing with penalty calculations (daily-based)
 - Rental history with status tracking
+- Daily rental pricing (price/day instead of price/hour)
 
 ---
 
@@ -141,9 +142,9 @@ lib/
 - Availability tracking
 
 #### 3. Rental System
-- Rental creation and tracking
+- Rental creation and tracking (daily-based pricing)
 - Payment processing
-- Return management with penalties
+- Return management with daily penalty calculations
 
 #### 4. Payment Integration
 - QR code scanning and display
@@ -167,7 +168,7 @@ lib/
 
 ### Payment Flow
 1. Owner sets up QR/UPI in product profile
-2. Renter selects rental duration
+2. Renter selects rental duration (in days, 1-30 days)
 3. Payment dashboard shows available methods
 4. Renter completes payment
 5. Owner receives payment confirmation
@@ -189,7 +190,8 @@ lib/
 - **Penalty Payments**: Pay late fees if applicable
 
 ### Penalty System
-- Calculated as: `Daily Rate × Overdue Days × 0.5`
+- Calculated as: `Daily Rate × Overdue Days × 1.0`
+- Minimum charge of 1 day for any overdue period (even partial days)
 - Visual indicators for overdue rentals
 - Automatic penalty application on late returns
 

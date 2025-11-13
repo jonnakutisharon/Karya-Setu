@@ -320,17 +320,18 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     final rentalId = rental['id'];
     final isPaymentExpanded = _expandedPaymentIds.contains(rentalId);
 
-    // Use rental_days as hours when present; otherwise derive from expected_return_date
-    int rentalHours = rental['rental_days'] ?? 0;
-    if (rentalHours == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
+    // Use rental_days when present; otherwise derive from expected_return_date
+    int rentalDays = rental['rental_days'] ?? 0;
+    if (rentalDays == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
       try {
         final rentedAt = DateTime.parse(rental['rented_at']);
         final expected = DateTime.parse(rental['expected_return_date']);
-        rentalHours = ((expected.difference(rentedAt).inMinutes) / 60).ceil();
+        final diffDays = expected.difference(rentedAt).inDays;
+        rentalDays = diffDays > 0 ? diffDays : 1; // At least 1 day
       } catch (_) {}
     }
-    if (rentalHours <= 0) rentalHours = 1;
-    final pricePerHour = (product?['price'] ?? 0).toDouble();
+    if (rentalDays <= 0) rentalDays = 1;
+    final pricePerDay = (product?['price'] ?? 0).toDouble();
 
     DateTime? rentedAt = DateTime.tryParse(rental['rented_at'] ?? '');
     if (status == 'pending_confirmation') {
@@ -347,15 +348,15 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     }
     // Fallback to calculated date if expected_return_date not available
     if (dueDate == null && rentedAt != null) {
-      dueDate = rentedAt.add(Duration(hours: rentalHours));
+      dueDate = rentedAt.add(Duration(days: rentalDays));
     }
     
     final returnedAt = rental['returned_at'] != null ? DateTime.tryParse(rental['returned_at']) : null;
     final paidAt = rental['paid_at'] != null ? DateTime.tryParse(rental['paid_at']) : null;
 
     final now = DateTime.now();
-    int overdueHours = 0; // display as hours
-    int minutesUntilDue = 0; // minute precision for warnings
+    int overdueDays = 0; // display as days
+    int daysUntilDue = 0; // day precision for warnings
     
     // Calculate penalty using same logic as rental_management_page
     double penalty = 0.0;
@@ -387,22 +388,21 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
       // If item is returned, use late_charge if it exists (penalty already finalized)
       if (lockedLateCharge != null && lockedLateCharge > 0) {
         penalty = lockedLateCharge;
-        // Calculate overdue hours from the locked penalty amount to ensure consistency
-        // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-        // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-        if (pricePerHour > 0) {
-          final overdueMinutesFromPenalty = (penalty * 60.0 / pricePerHour).round();
-          overdueHours = (overdueMinutesFromPenalty / 60.0).ceil();
+        // Calculate overdue days from the locked penalty amount to ensure consistency
+        // Penalty = pricePerDay * overdueDays * 1.0
+        // Therefore: overdueDays = penalty / pricePerDay
+        if (pricePerDay > 0) {
+          overdueDays = (penalty / pricePerDay).ceil();
         } else {
           // Fallback to time difference if price is not available
           if (dueDate != null && returnedAt != null && returnedAt.isAfter(dueDate)) {
-            final overdueMinutes = returnedAt.difference(dueDate).inMinutes;
-            overdueHours = (overdueMinutes / 60).ceil();
+            final overdueDaysCount = returnedAt.difference(dueDate).inDays;
+            overdueDays = overdueDaysCount > 0 ? overdueDaysCount : 1;
           }
         }
       } else {
         penalty = 0;
-        overdueHours = 0;
+        overdueDays = 0;
       }
     } else {
       // Only calculate penalty for active rentals that haven't been returned
@@ -414,7 +414,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
       }
       try {
         DateTime? expectedDate = _parseLocalIgnoringTimezone(rental['expected_return_date']);
-        expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(hours: rentalHours));
+        expectedDate ??= _parseLocalIgnoringTimezone(rental['rented_at'])?.add(Duration(days: rentalDays));
         if (expectedDate != null) {
           DateTime endTime;
           if (lockPenalty && rental['returned_at'] == null) {
@@ -435,41 +435,40 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
             }
           } else {
             // For active overdue rentals, always use current time to calculate penalty
-            // Penalty updates every minute until payment is submitted
+            // Penalty updates daily until payment is submitted
             endTime = DateTime.now();
           }
           if (endTime.isAfter(expectedDate)) {
-            final overdueMinutes = endTime.difference(expectedDate).inMinutes;
-            // Calculate penalty per minute: 100% of hourly rate per minute overdue
+            final overdueDaysCount = endTime.difference(expectedDate).inDays;
+            // Calculate penalty per day: 100% of daily rate per day overdue
             // This ensures owner doesn't lose money - renter pays full rate for overtime use
-            // Example: ₹30/hour = ₹0.50/min, penalty = ₹0.50/min overdue (full rate)
-            final pricePerMinute = pricePerHour / 60.0;
-            // Calculate penalty based on actual minutes overdue - full hourly rate (100%)
-            penalty = pricePerMinute * overdueMinutes * 1.0; // 100% penalty per minute (full rate)
-            // Ensure minimum 1 minute is calculated if overdue
-            if (penalty > 0 && overdueMinutes < 1) {
-              penalty = pricePerMinute * 1 * 1.0;
+            // Example: ₹100/day = ₹100/day overdue (full rate)
+            // Calculate penalty based on actual days overdue - full daily rate (100%)
+            penalty = pricePerDay * overdueDaysCount * 1.0; // 100% penalty per day (full rate)
+            // Ensure minimum 1 day is calculated if overdue
+            if (penalty > 0 && overdueDaysCount < 1) {
+              penalty = pricePerDay * 1 * 1.0;
+              overdueDays = 1;
+            } else {
+              overdueDays = overdueDaysCount;
             }
-            // Display overdue hours (rounded up for display, but penalty is based on exact minutes)
-            overdueHours = (overdueMinutes / 60).ceil();
           }
         }
       } catch (_) {}
       // After payment is submitted or locked, use rental['late_charge'] as fixed penalty everywhere
       if (lockPenalty && lockedLateCharge != null && lockedLateCharge > 0) {
         penalty = lockedLateCharge;
-        // Calculate overdue hours from the locked penalty amount to ensure consistency
-        // Penalty = (pricePerHour / 60) * overdueMinutes * 1.0
-        // Therefore: overdueMinutes = penalty / (pricePerHour / 60) = penalty * 60 / pricePerHour
-        if (pricePerHour > 0) {
-          final overdueMinutesFromPenalty = (penalty * 60.0 / pricePerHour).round();
-          overdueHours = (overdueMinutesFromPenalty / 60.0).ceil();
+        // Calculate overdue days from the locked penalty amount to ensure consistency
+        // Penalty = pricePerDay * overdueDays * 1.0
+        // Therefore: overdueDays = penalty / pricePerDay
+        if (pricePerDay > 0) {
+          overdueDays = (penalty / pricePerDay).ceil();
         }
       }
       
-      // Calculate minutes until due for warnings
+      // Calculate days until due for warnings
       if (dueDate != null && returnedAt == null && now.isBefore(dueDate)) {
-        minutesUntilDue = dueDate.difference(now).inMinutes;
+        daysUntilDue = dueDate.difference(now).inDays;
       }
     }
 
@@ -486,13 +485,13 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
         borderColor = Colors.red.shade200;
       }
     } else {
-      if (overdueHours > 0) {
+      if (overdueDays > 0) {
         cardColor = Colors.red.shade50;
         borderColor = Colors.red.shade300;
-      } else if (minutesUntilDue <= 60 && minutesUntilDue > 0) {
+      } else if (daysUntilDue <= 1 && daysUntilDue > 0) {
         cardColor = Colors.orange.shade50;
         borderColor = Colors.orange.shade300;
-      } else if (minutesUntilDue <= 180 && minutesUntilDue > 60) {
+      } else if (daysUntilDue <= 3 && daysUntilDue > 1) {
         cardColor = Colors.yellow.shade50;
         borderColor = Colors.yellow.shade300;
       }
@@ -523,7 +522,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
-                  _buildStatusBadge(isCompleted ? 'completed' : status, overdueHours, (minutesUntilDue / 60).ceil(), isPenaltyPaymentApproved),
+                  _buildStatusBadge(isCompleted ? 'completed' : status, overdueDays, daysUntilDue, isPenaltyPaymentApproved),
                 ],
               ),
             const SizedBox(height: 8),
@@ -559,8 +558,8 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
             // Don't show as "Overdue" if penalty is paid - show as normal details or "Penalty Paid"
             Builder(
               builder: (context) {
-                final bool showAsOverdue = overdueHours > 0 && !isPenaltyPaymentApproved;
-                final bool showPenaltyPaid = overdueHours > 0 && isPenaltyPaymentApproved;
+                final bool showAsOverdue = overdueDays > 0 && !isPenaltyPaymentApproved;
+                final bool showPenaltyPaid = overdueDays > 0 && isPenaltyPaymentApproved;
                 return Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -593,18 +592,18 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  _buildDetailRow('Duration', '${rentalHours} hour(s)'),
-                  _buildDetailRow('Price per Hour', '₹${pricePerHour.toStringAsFixed(2)}'),
-                  _buildDetailRow('Base Rent', '₹${(rentalHours * pricePerHour).toStringAsFixed(2)}'),
-                  if (overdueHours > 0) ...[
+                  _buildDetailRow('Duration', '${rentalDays} ${rentalDays == 1 ? 'day' : 'days'}'),
+                  _buildDetailRow('Price per Day', '₹${pricePerDay.toStringAsFixed(2)}'),
+                  _buildDetailRow('Base Rent', '₹${(rentalDays * pricePerDay).toStringAsFixed(2)}'),
+                  if (overdueDays > 0) ...[
                     const SizedBox(height: 4),
-                    _buildDetailRow('Overtime Hours', '$overdueHours hour(s)', isPenalty: !showPenaltyPaid),
+                    _buildDetailRow('Overtime Days', '$overdueDays ${overdueDays == 1 ? 'day' : 'days'}', isPenalty: !showPenaltyPaid),
                     _buildDetailRow('Penalty', '₹${penalty.toStringAsFixed(2)}', isPenalty: !showPenaltyPaid),
                   ],
                   const Divider(height: 16),
                   _buildDetailRow(
                     'Total Amount',
-                    '₹${((rentalHours * pricePerHour) + penalty).toStringAsFixed(2)}',
+                    '₹${((rentalDays * pricePerDay) + penalty).toStringAsFixed(2)}',
                     isPenalty: showAsOverdue,
                   ),
                 ],
@@ -834,10 +833,10 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                             ],
                           ),
                           const SizedBox(height: 12),
-                          _buildPaymentRow('Base Rent (${rentalHours} hours)', (rentalHours * pricePerHour).toDouble(), isPaid: true),
+                          _buildPaymentRow('Base Rent (${rentalDays} ${rentalDays == 1 ? 'day' : 'days'})', (rentalDays * pricePerDay).toDouble(), isPaid: true),
                           // Show penalty/overdue details if exists
-                          if (overdueHours > 0 && penalty > 0) ...[
-                            _buildDetailRow('Overtime Hours', '$overdueHours hour(s)', isPenalty: true),
+                          if (overdueDays > 0 && penalty > 0) ...[
+                            _buildDetailRow('Overtime Days', '$overdueDays ${overdueDays == 1 ? 'day' : 'days'}', isPenalty: true),
                           ],
                           if (rental['late_charge'] != null && (rental['late_charge'] as num).toDouble() > 0)
                             _buildPaymentRow('Late Fee (Penalty)', (rental['late_charge'] as num).toDouble(), isPaid: true, isPenalty: true)
@@ -850,7 +849,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                             builder: (context) {
                               // Total should include both base rent and penalty
                               final double totalPaid = (rental['amount'] ?? rental['amount_paid'] ?? 0).toDouble();
-                              final double calculatedTotal = (rentalHours * pricePerHour) + (penalty > 0 ? penalty : ((rental['late_charge'] as num?)?.toDouble() ?? 0.0));
+                              final double calculatedTotal = (rentalDays * pricePerDay) + (penalty > 0 ? penalty : ((rental['late_charge'] as num?)?.toDouble() ?? 0.0));
                               return _buildPaymentRow('Total Paid', totalPaid > 0 ? totalPaid : calculatedTotal, isTotal: true);
                             },
                           ),
@@ -908,7 +907,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
               
               // Urgency warnings for active rentals with color-coded notifications
               if (!isCompleted && rentedAt != null) ...[
-                if (overdueHours > 0) ...[
+                if (overdueDays > 0) ...[
                   // Check if penalty is paid and approved - show different message
                   if (isPenaltyPaymentApproved) ...[
                     // Penalty Paid - GREEN (Approved)
@@ -1015,8 +1014,8 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                               Expanded(
                                 child: Text(
                                   lockPenalty
-                                      ? 'OVERDUE: $overdueHours hour(s) late (Penalty Payment Under Review)'
-                                      : 'OVERDUE: $overdueHours hour(s) late',
+                                      ? 'OVERDUE: $overdueDays ${overdueDays == 1 ? 'day' : 'days'} late (Penalty Payment Under Review)'
+                                      : 'OVERDUE: $overdueDays ${overdueDays == 1 ? 'day' : 'days'} late',
                                   style: TextStyle(
                                     color: lockPenalty ? Colors.orange.shade700 : Colors.red.shade700,
                                     fontWeight: FontWeight.w700,
@@ -1073,7 +1072,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       ),
                     ),
                   ],
-                ] else if (minutesUntilDue <= 10 && minutesUntilDue > 0) ...[
+                ] else if (daysUntilDue == 0 && daysUntilDue >= 0) ...[
                   // 10 minutes or less - ORANGE (Critical Warning)
                   Container(
                     padding: const EdgeInsets.all(14),
@@ -1091,9 +1090,9 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                minutesUntilDue == 1 
-                                    ? 'DUE IN 1 MINUTE!'
-                                    : 'Due in $minutesUntilDue minutes',
+                                daysUntilDue == 0 
+                                    ? 'DUE TODAY!'
+                                    : 'Due today',
                                 style: TextStyle(
                                   color: Colors.orange.shade700,
                                   fontWeight: FontWeight.w700,
@@ -1131,7 +1130,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       ],
                     ),
                   ),
-                ] else if (minutesUntilDue <= 60 && minutesUntilDue > 10) ...[
+                ] else if (daysUntilDue == 1) ...[
                   // 1 hour or less - YELLOW (Warning)
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -1149,7 +1148,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Due in ${(minutesUntilDue / 60).ceil()} hour(s)',
+                                'Due in 1 day',
                                 style: TextStyle(
                                   color: Colors.orange.shade700,
                                   fontWeight: FontWeight.w600,
@@ -1170,8 +1169,8 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       ],
                     ),
                   ),
-                ] else if (minutesUntilDue <= 180 && minutesUntilDue > 60) ...[
-                  // 3 hours or less - LIGHT YELLOW (Reminder)
+                ] else if (daysUntilDue <= 3 && daysUntilDue > 1) ...[
+                  // 3 days or less - LIGHT YELLOW (Reminder)
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -1185,7 +1184,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Due in ${(minutesUntilDue / 60).ceil()} hour(s). Plan your return.',
+                            'Due in $daysUntilDue ${daysUntilDue == 1 ? 'day' : 'days'}. Plan your return.',
                             style: const TextStyle(
                               color: Colors.blue,
                               fontWeight: FontWeight.w500,
@@ -1228,7 +1227,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     );
   }
 
-  Widget _buildStatusBadge(String status, int overdueHours, int hoursUntilDue, bool isPenaltyPaymentApproved) {
+  Widget _buildStatusBadge(String status, int overdueDays, int daysUntilDue, bool isPenaltyPaymentApproved) {
     Color color;
     String text;
     IconData icon;
@@ -1246,15 +1245,15 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
         break;
       case 'active':
         // Check if penalty is paid - show different status
-        if (overdueHours > 0 && isPenaltyPaymentApproved) {
+        if (overdueDays > 0 && isPenaltyPaymentApproved) {
           color = Colors.green;
           text = 'Penalty Paid';
           icon = Icons.check_circle;
-        } else if (overdueHours > 0) {
+        } else if (overdueDays > 0) {
           color = Colors.red;
           text = 'Overdue';
           icon = Icons.warning;
-        } else if (hoursUntilDue <= 1) {
+        } else if (daysUntilDue <= 1) {
           color = Colors.orange;
           text = 'Due Soon';
           icon = Icons.schedule;
