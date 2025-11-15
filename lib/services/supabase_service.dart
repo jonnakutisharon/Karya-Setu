@@ -441,12 +441,23 @@ class SupabaseService {
     final expectedReturnDate = DateTime.now().add(Duration(days: rentalDays));
     final rentalAmount = rentalDays * pricePerDay;
 
-    await client.from('rentals').update({
-      'rental_days': rentalDays,
-      'expected_return_date': expectedReturnDate.toIso8601String(),
-      'amount_due': rentalAmount,
-      'status': 'awaiting_payment',
-    }).eq('id', rentalId);
+    // Try to update rental_days if column exists, but don't fail if it doesn't
+    try {
+      await client.from('rentals').update({
+        'rental_days': rentalDays,
+        'expected_return_date': expectedReturnDate.toIso8601String(),
+        'amount_due': rentalAmount,
+        'status': 'awaiting_payment',
+      }).eq('id', rentalId);
+    } catch (e) {
+      // If rental_days column doesn't exist, update without it
+      // The rental_days will be calculated from expected_return_date and rented_at when needed
+      await client.from('rentals').update({
+        'expected_return_date': expectedReturnDate.toIso8601String(),
+        'amount_due': rentalAmount,
+        'status': 'awaiting_payment',
+      }).eq('id', rentalId);
+    }
   }
 
   /// Update rental with days (for daily rentals)
@@ -457,11 +468,22 @@ class SupabaseService {
   }) async {
     final rentalAmount = rentalHours * pricePerHour; // rentalDays * pricePerDay
 
-    await client.from('rentals').update({
-      // Do NOT set expected_return_date here; start time only after owner approval
-      // Avoid writing to non-existent columns
-      'amount_due': rentalAmount,
-    }).eq('id', rentalId);
+    // Try to update rental_days if column exists, but don't fail if it doesn't
+    // The rental_days can be calculated from amount_due and pricePerDay when needed
+    try {
+      await client.from('rentals').update({
+        // Do NOT set expected_return_date here; start time only after owner approval
+        // Store rental_days so it can be retrieved later (if column exists)
+        'rental_days': rentalHours,
+        'amount_due': rentalAmount,
+      }).eq('id', rentalId);
+    } catch (e) {
+      // If rental_days column doesn't exist, just update amount_due
+      // The rental_days will be calculated from amount_due and pricePerDay when needed
+      await client.from('rentals').update({
+        'amount_due': rentalAmount,
+      }).eq('id', rentalId);
+    }
   }
 
   double calculateRentalAmount({

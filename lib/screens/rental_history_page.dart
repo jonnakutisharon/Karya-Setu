@@ -320,8 +320,27 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     final rentalId = rental['id'];
     final isPaymentExpanded = _expandedPaymentIds.contains(rentalId);
 
-    // Use rental_days when present; otherwise derive from expected_return_date
+    // Use rental_days when present; otherwise calculate from amount_due first (most accurate for pending rentals)
+    final pricePerDay = (product?['price'] ?? 0).toDouble();
     int rentalDays = rental['rental_days'] ?? 0;
+    
+    // If rental_days is not available, try to calculate from amount_due first (most accurate for pending rentals)
+    if (rentalDays == 0 && rental['amount_due'] != null && pricePerDay > 0) {
+      try {
+        final amountDue = (rental['amount_due'] as num).toDouble();
+        // Calculate exact days: amount_due / pricePerDay should give us the exact number of days
+        // Use round() to handle any floating point precision issues, but prefer exact division
+        final calculatedDays = amountDue / pricePerDay;
+        // If the division is very close to a whole number, use that; otherwise round
+        if ((calculatedDays - calculatedDays.round()).abs() < 0.01) {
+          rentalDays = calculatedDays.round();
+        } else {
+          rentalDays = calculatedDays.round(); // Round to nearest day
+        }
+      } catch (_) {}
+    }
+    
+    // Fallback to time difference if amount_due calculation didn't work
     if (rentalDays == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
       try {
         final rentedAt = DateTime.parse(rental['rented_at']);
@@ -331,7 +350,6 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
       } catch (_) {}
     }
     if (rentalDays <= 0) rentalDays = 1;
-    final pricePerDay = (product?['price'] ?? 0).toDouble();
 
     DateTime? rentedAt = DateTime.tryParse(rental['rented_at'] ?? '');
     if (status == 'pending_confirmation') {
@@ -357,6 +375,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     final now = DateTime.now();
     int overdueDays = 0; // display as days
     int daysUntilDue = 0; // day precision for warnings
+    int minutesUntilDue = 0; // minutes precision for "due soon" alert (30 min threshold)
     
     // Calculate penalty using same logic as rental_management_page
     double penalty = 0.0;
@@ -466,9 +485,11 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
         }
       }
       
-      // Calculate days until due for warnings
+      // Calculate days and minutes until due for warnings
       if (dueDate != null && returnedAt == null && now.isBefore(dueDate)) {
-        daysUntilDue = dueDate.difference(now).inDays;
+        final timeUntilDue = dueDate.difference(now);
+        daysUntilDue = timeUntilDue.inDays;
+        minutesUntilDue = timeUntilDue.inMinutes;
       }
     }
 
@@ -488,9 +509,12 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
       if (overdueDays > 0) {
         cardColor = Colors.red.shade50;
         borderColor = Colors.red.shade300;
-      } else if (daysUntilDue <= 1 && daysUntilDue > 0) {
+      } else if (minutesUntilDue <= 30 && minutesUntilDue > 0) {
         cardColor = Colors.orange.shade50;
         borderColor = Colors.orange.shade300;
+      } else if (daysUntilDue <= 1 && daysUntilDue > 0) {
+        cardColor = Colors.yellow.shade50;
+        borderColor = Colors.yellow.shade300;
       } else if (daysUntilDue <= 3 && daysUntilDue > 1) {
         cardColor = Colors.yellow.shade50;
         borderColor = Colors.yellow.shade300;
@@ -522,7 +546,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
-                  _buildStatusBadge(isCompleted ? 'completed' : status, overdueDays, daysUntilDue, isPenaltyPaymentApproved),
+                  _buildStatusBadge(isCompleted ? 'completed' : status, overdueDays, daysUntilDue, minutesUntilDue, isPenaltyPaymentApproved),
                 ],
               ),
             const SizedBox(height: 8),
@@ -1072,8 +1096,8 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                       ),
                     ),
                   ],
-                ] else if (daysUntilDue == 0 && daysUntilDue >= 0) ...[
-                  // 10 minutes or less - ORANGE (Critical Warning)
+                ] else if (minutesUntilDue <= 30 && minutesUntilDue > 0) ...[
+                  // 30 minutes or less - ORANGE (Critical Warning)
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
@@ -1090,9 +1114,9 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                daysUntilDue == 0 
-                                    ? 'DUE TODAY!'
-                                    : 'Due today',
+                                minutesUntilDue <= 5
+                                    ? 'DUE IN ${minutesUntilDue} MINUTES!'
+                                    : 'Due in ${minutesUntilDue} minutes',
                                 style: TextStyle(
                                   color: Colors.orange.shade700,
                                   fontWeight: FontWeight.w700,
@@ -1227,7 +1251,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
     );
   }
 
-  Widget _buildStatusBadge(String status, int overdueDays, int daysUntilDue, bool isPenaltyPaymentApproved) {
+  Widget _buildStatusBadge(String status, int overdueDays, int daysUntilDue, int minutesUntilDue, bool isPenaltyPaymentApproved) {
     Color color;
     String text;
     IconData icon;
@@ -1253,7 +1277,7 @@ class _RentalHistoryPageState extends State<RentalHistoryPage> {
           color = Colors.red;
           text = 'Overdue';
           icon = Icons.warning;
-        } else if (daysUntilDue <= 1) {
+        } else if (minutesUntilDue <= 30 && minutesUntilDue > 0) {
           color = Colors.orange;
           text = 'Due Soon';
           icon = Icons.schedule;

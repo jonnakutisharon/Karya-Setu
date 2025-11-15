@@ -244,6 +244,24 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
     final product = rental['products'];
     final pricePerDay = (product['price'] ?? 0).toDouble();
     int rentalDays = rental['rental_days'] ?? 0; // Using rental_days field for days
+    
+    // If rental_days is not available, try to calculate from amount_due first (most accurate for pending rentals)
+    if (rentalDays == 0 && rental['amount_due'] != null && pricePerDay > 0) {
+      try {
+        final amountDue = (rental['amount_due'] as num).toDouble();
+        // Calculate exact days: amount_due / pricePerDay should give us the exact number of days
+        // Use round() to handle any floating point precision issues, but prefer exact division
+        final calculatedDays = amountDue / pricePerDay;
+        // If the division is very close to a whole number, use that; otherwise round
+        if ((calculatedDays - calculatedDays.round()).abs() < 0.01) {
+          rentalDays = calculatedDays.round();
+        } else {
+          rentalDays = calculatedDays.round(); // Round to nearest day
+        }
+      } catch (_) {}
+    }
+    
+    // Fallback to time difference if amount_due calculation didn't work
     if (rentalDays == 0) {
       try {
         final rentedAt = _parseLocalIgnoringTimezone(rental['rented_at']);
@@ -1475,8 +1493,24 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
             // Payment Breakdown with Status (mirrors Rental History)
             const SizedBox(height: 16),
             Builder(builder: (context) {
-              // Calculate rental days locally
+              // Calculate rental days locally - use same logic as _calculatePaymentBreakdown
               int rentalDays = rental['rental_days'] ?? 0;
+              final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
+              
+              // If rental_days is not available, try to calculate from amount_due first (most accurate for pending rentals)
+              if (rentalDays == 0 && rental['amount_due'] != null && pricePerDay > 0) {
+                try {
+                  final amountDue = (rental['amount_due'] as num).toDouble();
+                  final calculatedDays = amountDue / pricePerDay;
+                  if ((calculatedDays - calculatedDays.round()).abs() < 0.01) {
+                    rentalDays = calculatedDays.round();
+                  } else {
+                    rentalDays = calculatedDays.round();
+                  }
+                } catch (_) {}
+              }
+              
+              // Fallback to time difference if amount_due calculation didn't work
               if (rentalDays == 0 && rental['expected_return_date'] != null && rental['rented_at'] != null) {
                 try {
                   final rentedAtLocal = DateTime.parse(rental['rented_at']);
@@ -1486,7 +1520,6 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
                 } catch (_) {}
               }
               if (rentalDays <= 0) rentalDays = 1;
-              final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
               final baseAmount = (rentalDays * pricePerDay).toDouble();
               // Determine current late fee and its paid status
               final breakdown = _calculatePaymentBreakdown(rental);
@@ -3190,7 +3223,15 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
             final pricePerDay = (rental['products']?['price'] ?? 0).toDouble();
             final due = (rental['amount_due'] as num).toDouble();
             if (pricePerDay > 0) {
-              rentalDays = (due / pricePerDay).ceil();
+              // Calculate exact days: amount_due / pricePerDay should give us the exact number of days
+              // Use round() to handle any floating point precision issues
+              final calculatedDays = due / pricePerDay;
+              // If the division is very close to a whole number, use that; otherwise round
+              if ((calculatedDays - calculatedDays.round()).abs() < 0.01) {
+                rentalDays = calculatedDays.round();
+              } else {
+                rentalDays = calculatedDays.round(); // Round to nearest day
+              }
             }
           } catch (_) {}
         }
@@ -3205,13 +3246,26 @@ class _RentalManagementPageState extends State<RentalManagementPage> {
         if (rentalDays <= 0) rentalDays = 1;
         final now = DateTime.now();
         final expectedReturn = now.add(Duration(days: rentalDays));
-        await SupabaseService.client.from('rentals').update({
+        
+        // Try to update rental_days if column exists, but don't fail if it doesn't
+        final Map<String, dynamic> updateData = {
           'status': 'active',
           'payment_status': 'paid',
           'paid_at': now.toIso8601String(),
           'rented_at': now.toIso8601String(),
           'expected_return_date': expectedReturn.toIso8601String(),
-        }).eq('id', rental['id']);
+        };
+        
+        // Try to include rental_days if column exists
+        try {
+          updateData['rental_days'] = rentalDays;
+          await SupabaseService.client.from('rentals').update(updateData).eq('id', rental['id']);
+        } catch (e) {
+          // If rental_days column doesn't exist, update without it
+          // The rental_days will be calculated from expected_return_date and rented_at when needed
+          updateData.remove('rental_days');
+          await SupabaseService.client.from('rentals').update(updateData).eq('id', rental['id']);
+        }
         // Mark product as rented upon approval - renter can now use it
         try {
           await SupabaseService.client.from('products').update({
